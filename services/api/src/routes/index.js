@@ -1,1 +1,26 @@
-import{Router}from"express";import{authRouter}from"./auth.js";import{chatRouter}from"./chat.js";import{adminRouter}from"./admin.js";export function createRouter(){const r=Router();r.use("/auth",authRouter);r.use("/chat",chatRouter);r.use("/admin",adminRouter);r.get("/health",(q,s)=>s.json({ok:true,system:"Kutara AI",version:"2.0.0",status:"online"}));r.get("/models",(q,s)=>s.json({ok:true,models:[{id:"llama3.1:8b",name:"Llama 3.1 8B",tier:"free",provider:"Ollama"},{id:"llama3.1:70b",name:"Llama 3.1 70B",tier:"basic",provider:"Ollama"},{id:"claude-sonnet-4-5",name:"Claude Sonnet 4.5",tier:"pro",provider:"Anthropic"},{id:"gpt-4o",name:"GPT-4o",tier:"pro",provider:"OpenAI"}]}));return r;}
+import { Router } from "express";
+import { authRouter } from "./auth.js";
+import { chatRouter } from "./chat.js";
+import { adminRouter } from "./admin.js";
+import { stripeRouter } from "./stripe.js";
+
+export function createRouter() {
+  const r = Router();
+  r.use("/auth", authRouter);
+  r.use("/chat", chatRouter);
+  r.use("/admin", adminRouter);
+  r.use("/stripe", stripeRouter);
+
+  r.get("/health", (q, s) => s.json({ ok: true, system: "Kutara AI", version: "2.0.0", status: "online" }));
+  r.get("/models", (q, s) => s.json({
+    ok: true,
+    models: [
+      { id: "llama3.1:8b", name: "Llama 3.1 8B", tier: "free", provider: "Ollama" },
+      { id: "llama3.1:70b", name: "Llama 3.1 70B", tier: "basic", provider: "Ollama" },
+      { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", tier: "pro", provider: "Anthropic" },
+      { id: "gpt-4o", name: "GPT-4o", tier: "pro", provider: "OpenAI" },
+    ]
+  }));
+
+  return r;
+}

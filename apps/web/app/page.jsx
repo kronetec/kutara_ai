@@ -40,7 +40,7 @@ function MarkdownView({ content }) {
 }
 
 export default function Home() {
-  const [view, setView] = useState("auth"); // auth | chat
+  const [view, setView] = useState("auth");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
@@ -53,6 +53,7 @@ export default function Home() {
   const [models, setModels] = useState([]);
   const [chats, setChats] = useState([]);
   const [activeChat, setActiveChat] = useState(null);
+  const [upgradeLoading, setUpgradeLoading] = useState(false);
   const endRef = useRef(null);
 
   useEffect(() => {
@@ -95,6 +96,44 @@ export default function Home() {
   }
 
   function logout() { clearToken(); setUser(null); setView("auth"); setMessages([]); setChats([]); setActiveChat(null); }
+
+  async function handleUpgrade() {
+    setUpgradeLoading(true);
+    try {
+      const t = getToken();
+      const r = await fetch(`${API_BASE}/stripe/create-checkout-session`, {
+        method: "POST", headers: { Authorization: `Bearer ${t}` }
+      });
+      const d = await r.json();
+      if (d.ok && d.url) {
+        window.location.href = d.url;
+      } else {
+        alert(d.error || "Upgrade failed");
+      }
+    } catch {
+      alert("Connection error");
+    }
+    setUpgradeLoading(false);
+  }
+
+  async function handleManageSubscription() {
+    setUpgradeLoading(true);
+    try {
+      const t = getToken();
+      const r = await fetch(`${API_BASE}/stripe/create-portal-session`, {
+        method: "POST", headers: { Authorization: `Bearer ${t}` }
+      });
+      const d = await r.json();
+      if (d.ok && d.url) {
+        window.location.href = d.url;
+      } else {
+        alert("No subscription found");
+      }
+    } catch {
+      alert("Connection error");
+    }
+    setUpgradeLoading(false);
+  }
 
   async function sendMessage() {
     const msg = input.trim();
@@ -203,6 +242,17 @@ export default function Home() {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
             <span className={`tierBadge ${user?.tier || "free"}`}>{getTierLabel()}</span>
           </div>
+          {(user?.tier === "free") ? (
+            <button onClick={handleUpgrade} disabled={upgradeLoading}
+              style={{ border: 0, background: "linear-gradient(145deg, #f6ca72, #b97422)", color: "#111", borderRadius: 8, padding: 10, width: "100%", textAlign: "left", fontWeight: 600, marginBottom: 8 }}>
+              {upgradeLoading ? "Loading..." : "⬆ Upgrade to Basic - €5/mo"}
+            </button>
+          ) : (user?.tier === "basic") ? (
+            <button onClick={handleManageSubscription} disabled={upgradeLoading}
+              style={{ border: "1px solid rgba(255,255,255,0.12)", background: "transparent", color: "#f6ca72", borderRadius: 8, padding: 10, width: "100%", textAlign: "left", marginBottom: 8 }}>
+              {upgradeLoading ? "Loading..." : "⚙ Manage Subscription"}
+            </button>
+          ) : null}
           <button onClick={logout} style={{ border: 0, background: "rgba(255,80,80,0.08)", color: "#ffb4b4", borderRadius: 8, padding: 10, width: "100%", textAlign: "left" }}>Logout</button>
         </div>
         <div className="footer"><span>Code by</span><strong>CodeTiger.de</strong></div>
