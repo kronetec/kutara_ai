@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 
 const API_BASE = "https://api.kutara.org/api";
 
@@ -7,44 +7,77 @@ function getToken() { return typeof window !== "undefined" ? localStorage.getIte
 function setToken(t) { localStorage.setItem("kutara_token", t); }
 function clearToken() { localStorage.removeItem("kutara_token"); }
 
+function useDebounce(v, d) {
+  const [dv, setDv] = useState(v);
+  useEffect(() => { const t = setTimeout(() => setDv(v), d); return () => clearTimeout(t); }, [v, d]);
+  return dv;
+}
+
+function CopyBtn({ text }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button className="copyBtn" onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1800); }}>
+      {copied ? "Copied!" : "Copy"}
+    </button>
+  );
+}
+
+function CodeBlock({ lang, code }) {
+  return (
+    <div className="codeBlock">
+      <div className="codeHead">
+        <span>{lang || "code"}</span>
+        <CopyBtn text={code} />
+      </div>
+      <pre><code>{code}</code></pre>
+    </div>
+  );
+}
+
 function MarkdownView({ content }) {
   const blocks = [];
   const regex = /```(\w+)?\n([\s\S]*?)```/g;
   let last = 0, m;
   while ((m = regex.exec(content)) !== null) {
-    if (m.index > last) blocks.push({ type: "text", value: content.slice(last, m.index) });
-    blocks.push({ type: "code", lang: m[1] || "text", value: m[2].trim() });
+    if (m.index > last) blocks.push({ t: "text", v: content.slice(last, m.index) });
+    blocks.push({ t: "code", lang: m[1] || "", v: m[2].trim() });
     last = regex.lastIndex;
   }
-  if (last < content.length) blocks.push({ type: "text", value: content.slice(last) });
+  if (last < content.length) blocks.push({ t: "text", v: content.slice(last) });
 
   return (<div className="markdown">{
-    blocks.map((b, i) => b.type === "code" ? (
-      <div className="codeBlock" key={i}>
-        <div className="codeTop"><span>{b.lang}</span><button onClick={() => navigator.clipboard.writeText(b.value)}>Copy</button></div>
-        <pre><code>{b.value}</code></pre>
-      </div>
-    ) : (
-      <div key={i}>{b.value.split("\n").map((l, j) => {
-        const line = l.trimEnd();
-        if (!line.trim()) return <div key={j} className="spaceLine" />;
-        if (line.startsWith("### ")) return <h3 key={j}>{line.slice(4)}</h3>;
-        if (line.startsWith("## ")) return <h2 key={j}>{line.slice(3)}</h2>;
-        if (line.startsWith("# ")) return <h1 key={j}>{line.slice(2)}</h1>;
-        if (line.startsWith("- ")) return <li key={j}>{line.slice(2)}</li>;
-        if (/^\d+\.\s/.test(line)) return <li key={j}>{line.replace(/^\d+\.\s/, "")}</li>;
-        return <p key={j}>{line}</p>;
-      })}</div>
-    ))
+    blocks.map((b, i) => b.t === "code"
+      ? <CodeBlock key={i} lang={b.lang} code={b.v} />
+      : <div key={i} className="mdText">{
+          b.v.split("\n").map((l, j) => {
+            const line = l.trimEnd();
+            if (!line.trim()) return <div key={j} className="mdSpacer" />;
+            if (line.startsWith("### ")) return <h3 key={j}>{line.slice(4)}</h3>;
+            if (line.startsWith("## ")) return <h2 key={j}>{line.slice(3)}</h2>;
+            if (line.startsWith("# ")) return <h1 key={j}>{line.slice(2)}</h1>;
+            if (line.startsWith("- ")) return <li key={j}>{line.slice(2)}</li>;
+            if (/^\d+\.\s/.test(line)) return <li key={j}>{line.replace(/^\d+\.\s/, "")}</li>;
+            return <p key={j}>{line}</p>;
+          })
+        }</div>)
   }</div>);
+}
+
+function ThinkingDots() {
+  return (
+    <span className="thinkingDots">
+      <span className="dot" /><span className="dot" /><span className="dot" />
+    </span>
+  );
 }
 
 export default function Home() {
   const [view, setView] = useState("auth");
+  const [authMode, setAuthMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [authLoading, setAuthLoading] = useState(false);
   const [user, setUser] = useState(null);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
@@ -55,7 +88,20 @@ export default function Home() {
   const [activeChat, setActiveChat] = useState(null);
   const [upgradeLoading, setUpgradeLoading] = useState(false);
   const [demoMode, setDemoMode] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [chatSearch, setChatSearch] = useState("");
+  const [editingTitle, setEditingTitle] = useState(null);
+  const [editTitleVal, setEditTitleVal] = useState("");
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const endRef = useRef(null);
+  const inputRef = useRef(null);
+  const menuRef = useRef(null);
+
+  const debouncedSearch = useDebounce(chatSearch, 200);
+
+  const filteredChats = chats.filter(c =>
+    (c.title || "").toLowerCase().includes(debouncedSearch.toLowerCase())
+  );
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -75,38 +121,38 @@ export default function Home() {
     }
     fetch(`${API_BASE}/models`).then(r => r.json()).then(d => setModels(d.models || [])).catch(() => {});
     fetch(`${API_BASE}/stripe/demo-status`).then(r => r.json()).then(d => setDemoMode(d.demo)).catch(() => {});
+    document.addEventListener("click", e => { if (menuRef.current && !menuRef.current.contains(e.target)) setUserMenuOpen(false); });
   }, []);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  useEffect(() => { if (view === "chat") inputRef.current?.focus(); }, [view]);
 
-  async function loadChats() {
+  const loadChats = useCallback(async () => {
     const t = getToken(); if (!t) return;
     const r = await fetch(`${API_BASE}/chat`, { headers: { Authorization: `Bearer ${t}` } });
     const d = await r.json();
     if (d.ok) setChats(d.chats || []);
-  }
+  }, []);
 
-  async function login() {
-    setAuthError(""); setLoading(true);
+  async function doAuth(mode) {
+    setAuthError(""); setAuthLoading(true);
     try {
-      const r = await fetch(`${API_BASE}/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
+      const ep = mode === "login" ? "login" : "register";
+      const r = await fetch(`${API_BASE}/auth/${ep}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password })
+      });
       const d = await r.json();
-      if (!d.ok) { setAuthError(d.error || "Login failed"); setLoading(false); return; }
-      setToken(d.accessToken); setUser(d.user); setView("chat"); setLoading(false); loadChats();
-    } catch { setAuthError("Connection error"); setLoading(false); }
+      if (!d.ok) { setAuthError(d.error || "Failed"); setAuthLoading(false); return; }
+      setToken(d.accessToken); setUser(d.user); setView("chat"); setAuthLoading(false);
+      loadChats();
+    } catch { setAuthError("Connection error"); setAuthLoading(false); }
   }
 
-  async function register() {
-    setAuthError(""); setLoading(true);
-    try {
-      const r = await fetch(`${API_BASE}/auth/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
-      const d = await r.json();
-      if (!d.ok) { setAuthError(d.error || "Register failed"); setLoading(false); return; }
-      setToken(d.accessToken); setUser(d.user); setView("chat"); setLoading(false); loadChats();
-    } catch { setAuthError("Connection error"); setLoading(false); }
+  function logout() {
+    clearToken(); setUser(null); setView("auth"); setMessages([]); setChats([]);
+    setActiveChat(null); setSidebarOpen(true); setUserMenuOpen(false);
   }
-
-  function logout() { clearToken(); setUser(null); setView("auth"); setMessages([]); setChats([]); setActiveChat(null); }
 
   async function handleUpgrade() {
     setUpgradeLoading(true);
@@ -116,14 +162,9 @@ export default function Home() {
         method: "POST", headers: { Authorization: `Bearer ${t}` }
       });
       const d = await r.json();
-      if (d.ok && d.url) {
-        window.location.href = d.url;
-      } else {
-        alert(d.error || "Upgrade failed");
-      }
-    } catch {
-      alert("Connection error");
-    }
+      if (d.ok && d.url) { window.location.href = d.url; }
+      else { alert(d.error || "Upgrade failed"); }
+    } catch { alert("Connection error"); }
     setUpgradeLoading(false);
   }
 
@@ -135,14 +176,9 @@ export default function Home() {
         method: "POST", headers: { Authorization: `Bearer ${t}` }
       });
       const d = await r.json();
-      if (d.ok && d.url) {
-        window.location.href = d.url;
-      } else {
-        alert("No subscription found");
-      }
-    } catch {
-      alert("Connection error");
-    }
+      if (d.ok && d.url) { window.location.href = d.url; }
+      else { alert("No subscription found"); }
+    } catch { alert("Connection error"); }
     setUpgradeLoading(false);
   }
 
@@ -151,7 +187,7 @@ export default function Home() {
     if (!msg || sending) return;
     setInput(""); setSending(true);
     const userMsg = { role: "user", content: msg };
-    const pendingMsg = { role: "assistant", content: "..." };
+    const pendingMsg = { role: "assistant", content: null, thinking: true };
     setMessages(prev => [...prev, userMsg, pendingMsg]);
 
     try {
@@ -176,7 +212,7 @@ export default function Home() {
           next[next.length - 1] = { role: "assistant", content: `Error: ${d.error || "Unknown error"}` };
           return next;
         });
-        if (d.lockout) setTimeout(() => { setUser(prev => ({ ...prev, questions_remaining: 0 })); }, 100);
+        if (d.lockout) setTimeout(() => setUser(prev => ({ ...prev, questions_remaining: 0 })), 100);
       }
     } catch {
       setMessages(prev => {
@@ -188,7 +224,7 @@ export default function Home() {
     setSending(false);
   }
 
-  function newChat() { setMessages([]); setActiveChat(null); }
+  function newChat() { setMessages([]); setActiveChat(null); setChatSearch(""); setTimeout(() => inputRef.current?.focus(), 100); }
 
   async function loadChat(id) {
     const t = getToken(); if (!t) return;
@@ -200,130 +236,270 @@ export default function Home() {
     }
   }
 
+  async function deleteChat(id) {
+    const t = getToken(); if (!t) return;
+    await fetch(`${API_BASE}/chat/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${t}` } });
+    if (activeChat?.id === id) { setMessages([]); setActiveChat(null); }
+    loadChats();
+  }
+
+  async function renameChat(id) {
+    if (!editTitleVal.trim()) { setEditingTitle(null); return; }
+    const t = getToken(); if (!t) return;
+    const r = await fetch(`${API_BASE}/chat/${id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+      body: JSON.stringify({ title: editTitleVal.trim() })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      if (activeChat?.id === id) setActiveChat(prev => ({ ...prev, title: editTitleVal.trim() }));
+      loadChats();
+    }
+    setEditingTitle(null);
+  }
+
   function getTierLabel() {
     if (!user) return "";
     if (user.tier === "pro") return "Pro";
     if (user.tier === "basic") return "Basic";
-    return `Free (${user.questions_remaining || 0} left)`;
+    return `Free (${user.questions_remaining || 0})`;
   }
+
+  const suggestions = [
+    "Write a Python script to sort files by date",
+    "Explain how DNS works",
+    "Create a Docker Compose for PostgreSQL",
+    "Write a bash backup script"
+  ];
 
   if (view === "auth") {
     return (
       <main className="authPage">
+        <div className="authGlow" />
         <div className="authCard">
-          <div className="brand" style={{ marginBottom: 18 }}>
-            <div className="brandIcon">K</div>
-            <div><h1>Kutara AI</h1><p>Sign in to your account</p></div>
+          <div className="authLogo">
+            <div className="authIcon">K</div>
           </div>
-          <label>Email</label>
-          <input value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" />
-          <label>Password</label>
-          <input type="password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && login()} placeholder="Min 6 characters" />
+          <h1 className="authTitle">Kutara AI</h1>
+          <p className="authSub">{authMode === "login" ? "Welcome back" : "Create your account"}</p>
+
+          <div className="authFields">
+            <div className="authField">
+              <label>Email</label>
+              <input value={email} onChange={e => setEmail(e.target.value)} placeholder="name@email.com" />
+            </div>
+            <div className="authField">
+              <label>Password</label>
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && doAuth(authMode)} placeholder="Min 6 characters" />
+            </div>
+          </div>
+
           {authError && <div className="authError">{authError}</div>}
-          <button onClick={register} disabled={loading}>{loading ? "Loading..." : "Sign Up"}</button>
-          <button onClick={login} disabled={loading} style={{ marginTop: 8, background: "#2f2f2f", color: "#ececec", border: "1px solid rgba(255,255,255,0.12)" }}>
-            {loading ? "Loading..." : "Sign In"}
+
+          <button className="authBtn" onClick={() => doAuth(authMode)} disabled={authLoading || !email || !password}>
+            {authLoading ? <span className="btnSpinner" /> : authMode === "login" ? "Sign In" : "Create Account"}
           </button>
-          <p className="hint" style={{ marginTop: 16 }}>Free tier: 5 questions per week. No credit card needed.</p>
+
+          <div className="authHint">
+            {authMode === "login" ? (
+              <>Don't have an account? <button onClick={() => { setAuthMode("register"); setAuthError(""); }}>Sign up</button></>
+            ) : (
+              <>Already have an account? <button onClick={() => { setAuthMode("login"); setAuthError(""); }}>Sign in</button></>
+            )}
+          </div>
+
+          <div className="authFooter">
+            Free tier: 5 questions/week. No credit card needed.
+          </div>
         </div>
       </main>
     );
   }
 
   return (
-    <main className="shell">
-      <aside className="sidebar">
-        <div className="brandRow" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div className="brand">
-            <div className="brandIcon">K</div>
-            <div><h1>Kutara AI</h1><p>{user?.email || "User"}</p></div>
+    <main className="chatShell">
+      {/* Sidebar */}
+      <aside className={`chatSidebar ${sidebarOpen ? "open" : "closed"}`}>
+        <div className="sidebarHeader">
+          <div className="sidebarBrand">
+            <div className="sidebarIcon">K</div>
+            <div className="sidebarBrandText">
+              <strong>Kutara AI</strong>
+              <span>{demoMode ? "DEMO" : "v2.0"}</span>
+            </div>
           </div>
-          {demoMode && <span style={{ fontSize: 10, background: "rgba(246,202,114,0.15)", color: "#f6ca72", padding: "2px 6px", borderRadius: 4, fontWeight: 700 }}>DEMO</span>}
+          <button className="sidebarCloseBtn" onClick={() => setSidebarOpen(false)}>✕</button>
         </div>
-        <button className="newChat" onClick={newChat}>+ New Chat</button>
-        <div className="sideTitle">Chat History</div>
-        <div style={{ flex: 1, overflow: "auto", display: "grid", gap: 2 }}>
-          {chats.map(chat => (
-            <button key={chat.id} onClick={() => loadChat(chat.id)}
-              style={{ border: 0, borderRadius: 8, background: "transparent", color: "#d8d8d8", textAlign: "left", padding: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {chat.title || "Untitled"}
-            </button>
+
+        <button className="newChatBtn" onClick={newChat}>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
+          New Chat
+        </button>
+
+        <div className="sidebarSearch">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input value={chatSearch} onChange={e => setChatSearch(e.target.value)} placeholder="Search chats..." />
+        </div>
+
+        <div className="sidebarChats">
+          {filteredChats.length === 0 && (
+            <div className="sidebarEmpty">
+              {chatSearch ? "No matching chats" : "No chats yet"}
+            </div>
+          )}
+          {filteredChats.map(chat => (
+            <div key={chat.id}
+              className={`sidebarChatItem ${activeChat?.id === chat.id ? "active" : ""}`}
+              onClick={() => loadChat(chat.id)}>
+              <div className="sidebarChatTitle">
+                {editingTitle === chat.id ? (
+                  <input className="renameInput" value={editTitleVal}
+                    onChange={e => setEditTitleVal(e.target.value)}
+                    onBlur={() => renameChat(chat.id)}
+                    onKeyDown={e => { if (e.key === "Enter") renameChat(chat.id); if (e.key === "Escape") setEditingTitle(null); }}
+                    onClick={e => e.stopPropagation()} autoFocus />
+                ) : (
+                  <span>{chat.title || "Untitled"}</span>
+                )}
+              </div>
+              <div className="sidebarChatActions">
+                <button className="chatActionBtn" title="Rename" onClick={e => { e.stopPropagation(); setEditingTitle(chat.id); setEditTitleVal(chat.title || ""); }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+                </button>
+                <button className="chatActionBtn" title="Delete" onClick={e => { e.stopPropagation(); deleteChat(chat.id); }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                </button>
+              </div>
+            </div>
           ))}
         </div>
-        <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-            <span className={`tierBadge ${user?.tier || "free"}`}>{getTierLabel()}</span>
+
+        <div className="sidebarUser" ref={menuRef}>
+          <div className="sidebarUserInfo" onClick={() => setUserMenuOpen(!userMenuOpen)}>
+            <div className="sidebarUserAvatar">{user?.email?.[0]?.toUpperCase() || "U"}</div>
+            <div className="sidebarUserText">
+              <span className="sidebarUserName">{user?.email || "User"}</span>
+              <span className={`sidebarTier tier-${user?.tier || "free"}`}>{getTierLabel()}</span>
+            </div>
+            <svg className={`sidebarChevron ${userMenuOpen ? "open" : ""}`} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6"/></svg>
           </div>
-          {(user?.tier === "free") ? (
-            <button onClick={handleUpgrade} disabled={upgradeLoading}
-              style={{ border: 0, background: "linear-gradient(145deg, #f6ca72, #b97422)", color: "#111", borderRadius: 8, padding: 10, width: "100%", textAlign: "left", fontWeight: 600, marginBottom: 8 }}>
-              {upgradeLoading ? "Loading..." : demoMode ? "⬆ Upgrade to Basic (DEMO)" : "⬆ Upgrade to Basic - €5/mo"}
-            </button>
-          ) : (user?.tier === "basic") ? (
-            <button onClick={handleManageSubscription} disabled={upgradeLoading}
-              style={{ border: "1px solid rgba(255,255,255,0.12)", background: "transparent", color: "#f6ca72", borderRadius: 8, padding: 10, width: "100%", textAlign: "left", marginBottom: 8 }}>
-              {upgradeLoading ? "Loading..." : demoMode ? "⚙ Manage Subscription (DEMO)" : "⚙ Manage Subscription"}
-            </button>
-          ) : null}
-          <button onClick={logout} style={{ border: 0, background: "rgba(255,80,80,0.08)", color: "#ffb4b4", borderRadius: 8, padding: 10, width: "100%", textAlign: "left" }}>Logout</button>
+
+          {userMenuOpen && (
+            <div className="userMenu">
+              <div className="userMenuItem" onClick={() => { setUserMenuOpen(false); logout(); }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+                Log out
+              </div>
+              <div className="userMenuDivider" />
+              <div className="userMenuItem muted">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                {demoMode ? "DEMO Mode" : "Production"}
+              </div>
+            </div>
+          )}
         </div>
-        <div className="footer"><span>Code by</span><strong>CodeTiger.de</strong></div>
       </aside>
 
-      <section className="main">
-        <header className="topbar">
-          <div><h2>KAIM Chat</h2><p>{activeChat?.title || "New conversation"}</p></div>
-          <div className="selectors">
-            <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)}>
+      {/* Overlay for mobile */}
+      {sidebarOpen && <div className="sidebarOverlay" onClick={() => setSidebarOpen(false)} />}
+
+      {/* Main chat area */}
+      <section className="chatMain">
+        {/* Top bar */}
+        <header className="chatTopbar">
+          <div className="topbarLeft">
+            <button className="menuBtn" onClick={() => setSidebarOpen(true)}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+            </button>
+            <div className="topbarTitle">
+              <h2>{activeChat?.title || "New conversation"}</h2>
+            </div>
+          </div>
+          <div className="topbarRight">
+            <select className="modelSelect" value={selectedModel} onChange={e => setSelectedModel(e.target.value)}>
               <option value="">Auto ({user?.tier === "pro" ? "Claude" : user?.tier === "basic" ? "Llama 70B" : "Llama 8B"})</option>
               {models.filter(m => m.tier === "free" || m.tier === user?.tier).map(m => (
                 <option key={m.id} value={m.id}>{m.name} ({m.tier})</option>
               ))}
             </select>
+            {user?.tier === "free" && (
+              <button className="upgradeBtn" onClick={handleUpgrade} disabled={upgradeLoading}>
+                {demoMode ? "Upgrade (DEMO)" : "Upgrade"}
+              </button>
+            )}
+            {user?.tier === "basic" && (
+              <button className="upgradeBtn outline" onClick={handleManageSubscription} disabled={upgradeLoading}>
+                {demoMode ? "Manage (DEMO)" : "Manage"}
+              </button>
+            )}
           </div>
         </header>
 
-        <section className="messages">
-          {messages.length === 0 && (
-            <div style={{ textAlign: "center", padding: 60, color: "#888" }}>
-              <h2 style={{ margin: "0 0 8px" }}>Kutara AI</h2>
-              <p>Ask anything. Free built-in AI models are active.</p>
-              <div className="hint">Always responds in your language</div>
-            </div>
-          )}
-          {messages.map((item, i) => (
-            <div key={i} className={`message ${item.role}`}>
-              <div className="messageInner">
-                <div className="avatar">{item.role === "user" ? "U" : "K"}</div>
-                <div className="messageBody">
-                  <div className="meta">
-                    <strong>{item.role === "user" ? "You" : "KAIM"}</strong>
-                    {item.content === "..." && <span style={{ color: "#f6ca72" }}>thinking...</span>}
-                  </div>
-                  {item.content !== "..." && <MarkdownView content={item.content} />}
-                  {item.content === "..." && <div style={{ color: "#888" }}>Generating response...</div>}
-                </div>
+        {/* Messages */}
+        <div className="chatMessages">
+          {messages.length === 0 ? (
+            <div className="chatEmpty">
+              <div className="chatEmptyIcon">K</div>
+              <h2 className="chatEmptyTitle">How can I help you today?</h2>
+              <div className="chatEmptyGrid">
+                {suggestions.map((s, i) => (
+                  <button key={i} className="suggestionChip" onClick={() => { setInput(s); inputRef.current?.focus(); }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4Z"/><path d="M5 12h2M17 12h2M12 17v4"/></svg>
+                    {s}
+                  </button>
+                ))}
               </div>
             </div>
-          ))}
+          ) : (
+            <>
+              {messages.map((item, i) => (
+                <div key={i} className={`msgRow ${item.role}`}>
+                  <div className="msgAvatar">
+                    {item.role === "user"
+                      ? (user?.email?.[0]?.toUpperCase() || "U")
+                      : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4Z"/><path d="M5 12h2M17 12h2M12 17v4"/></svg>
+                    }
+                  </div>
+                  <div className="msgContent">
+                    {item.role === "user" ? (
+                      <div className="msgUserText">{item.content}</div>
+                    ) : item.thinking ? (
+                      <div className="msgThinking">
+                        <ThinkingDots />
+                        <span>Thinking...</span>
+                      </div>
+                    ) : (
+                      <div className="msgAssistant">
+                        <MarkdownView content={item.content} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
           <div ref={endRef} />
-        </section>
+        </div>
 
-        <section className="quickBar">
-          <button onClick={() => { setInput("Create a website blueprint"); }}>Website</button>
-          <button onClick={() => { setInput("Create an SSH setup plan"); }}>SSH</button>
-          <button onClick={() => { setInput("Create a Docker Compose template"); }}>Docker</button>
-          <button onClick={() => { setInput("Explain DNS records"); }}>DNS</button>
-        </section>
-
-        <section className="composerWrap">
-          <div className="composer">
-            <textarea placeholder="Message KAIM..." value={input} onChange={e => setInput(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} />
-            <button onClick={sendMessage} disabled={sending || !input.trim()}>{sending ? "..." : "➤"}</button>
+        {/* Bottom area */}
+        <div className="chatBottom">
+          <div className="composerWrap">
+            <div className="composer">
+              <textarea ref={inputRef} placeholder="Message Kutara..." value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+                rows={1} />
+              <button className="sendBtn" onClick={sendMessage} disabled={sending || !input.trim()}>
+                {sending ? <span className="btnSpinner" /> : (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+                )}
+              </button>
+            </div>
+            <p className="composerHint">
+              Kutara AI can make mistakes. Verify important information.
+            </p>
           </div>
-          <p className="hint">Kutara AI v2 - Powered by open source AI models</p>
-        </section>
+        </div>
       </section>
     </main>
   );

@@ -9,6 +9,8 @@ import cors from "cors";
 import helmet from "helmet";
 import { createRouter } from "./routes/index.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+import { requestLogger } from "./middleware/logger.js";
+import { trackRequest, getMetrics } from "./middleware/metrics.js";
 
 const app = express();
 app.use(helmet());
@@ -16,6 +18,8 @@ app.use(cors({
   origin: ["https://kutara.org", "https://app.kutara.org"],
   credentials: true
 }));
+app.use(requestLogger);
+app.use((req, res, next) => { trackRequest(); next(); });
 
 app.use((req, res, next) => {
   if (req.originalUrl === "/api/stripe/webhook") {

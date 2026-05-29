@@ -118,6 +118,18 @@ chatRouter.get("/:id", async (req, res, n) => {
   } catch (e) { n(e); }
 });
 
+chatRouter.patch("/:id", async (req, res, n) => {
+  try {
+    const a = req.headers.authorization;
+    if (!a) return res.status(401).json({ ok: false, error: "Auth required" });
+    const d = jwt.verify(a.replace("Bearer ", ""), S);
+    const { title } = req.body;
+    if (!title) return res.status(400).json({ ok: false, error: "Title required" });
+    await pool.query("UPDATE chats SET title=$1, updated_at=NOW() WHERE id=$2 AND user_id=$3", [title, req.params.id, d.userId]);
+    res.json({ ok: true });
+  } catch (e) { n(e); }
+});
+
 chatRouter.delete("/:id", async (req, res, n) => {
   try {
     await pool.query("DELETE FROM chats WHERE id=$1", [req.params.id]);

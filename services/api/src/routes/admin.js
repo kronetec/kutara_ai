@@ -4,6 +4,7 @@ import { pool } from "../lib/db.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { getMetrics } from "../middleware/metrics.js";
 
 const S = process.env.JWT_SECRET || "dev";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -53,6 +54,8 @@ adminRouter.get("/system", ra, async (req, res, n) => {
     res.json({ ok: true, system: { users: parseInt(u.rows[0].count), chats: parseInt(c.rows[0].count), tiers, version: "2.0.0" } });
   } catch (e) { n(e); }
 });
+
+adminRouter.get("/metrics", ra, getMetrics);
 
 adminRouter.get("/config", ra, (req, res) => {
   const cfg = {
