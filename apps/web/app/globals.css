@@ -248,6 +248,10 @@ a { color: inherit; text-decoration: none; }
   color: #f6ca72; font-weight: 500;
 }
 .upgradeBtn.outline:hover { background: rgba(246,202,114,0.06); }
+.anonBadge {
+  font-size: 11px; padding: 3px 8px; border-radius: 999px;
+  background: rgba(255,255,255,0.06); color: #888; white-space: nowrap;
+}
 
 /* ============ MESSAGES AREA ============ */
 .chatMessages {

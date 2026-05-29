@@ -1,17 +1,11 @@
 "use client";
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef } from "react";
 
 const API_BASE = "https://api.kutara.org/api";
 
-function getToken() { return typeof window !== "undefined" ? localStorage.getItem("kutara_token") : null; }
-function setToken(t) { localStorage.setItem("kutara_token", t); }
-function clearToken() { localStorage.removeItem("kutara_token"); }
-
-function useDebounce(v, d) {
-  const [dv, setDv] = useState(v);
-  useEffect(() => { const t = setTimeout(() => setDv(v), d); return () => clearTimeout(t); }, [v, d]);
-  return dv;
-}
+function getToken() { try { return localStorage.getItem("kutara_token"); } catch { return null; } }
+function setToken(t) { try { localStorage.setItem("kutara_token", t); } catch {} }
+function clearToken() { try { localStorage.removeItem("kutara_token"); } catch {} }
 
 function CopyBtn({ text }) {
   const [copied, setCopied] = useState(false);
@@ -71,9 +65,16 @@ function ThinkingDots() {
   );
 }
 
+const suggestions = [
+  "Write a Python script to sort files by date",
+  "Explain how DNS works",
+  "Create a Docker Compose for PostgreSQL",
+  "Write a bash backup script"
+];
+
 export default function Home() {
   const [view, setView] = useState("auth");
-  const [authMode, setAuthMode] = useState("login");
+  const [authMode, setAuthMode] = useState("register");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
@@ -97,42 +98,51 @@ export default function Home() {
   const inputRef = useRef(null);
   const menuRef = useRef(null);
 
-  const debouncedSearch = useDebounce(chatSearch, 200);
-
   const filteredChats = chats.filter(c =>
-    (c.title || "").toLowerCase().includes(debouncedSearch.toLowerCase())
+    (c.title || "").toLowerCase().includes(chatSearch.toLowerCase())
   );
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("demo") === "1") {
-      window.history.replaceState({}, "", "/");
+    const checkAuth = async () => {
       const t = getToken();
       if (t) {
-        fetch(`${API_BASE}/auth/me`, { headers: { Authorization: `Bearer ${t}` } })
-          .then(r => r.json()).then(d => { if (d.ok) setUser(d.user); });
+        try {
+          const r = await fetch(`${API_BASE}/auth/me`, { headers: { Authorization: `Bearer ${t}` } });
+          const d = await r.json();
+          if (d.ok) {
+            setUser(d.user);
+            loadChats();
+          }
+        } catch (e) { console.error("Auth check failed:", e); }
+        if (!user) clearToken();
       }
-    }
-    const t = getToken();
-    if (t) {
-      fetch(`${API_BASE}/auth/me`, { headers: { Authorization: `Bearer ${t}` } })
-        .then(r => r.json()).then(d => { if (d.ok) { setUser(d.user); setView("chat"); loadChats(); } else clearToken(); })
-        .catch(() => {});
-    }
-    fetch(`${API_BASE}/models`).then(r => r.json()).then(d => setModels(d.models || [])).catch(() => {});
-    fetch(`${API_BASE}/stripe/demo-status`).then(r => r.json()).then(d => setDemoMode(d.demo)).catch(() => {});
-    document.addEventListener("click", e => { if (menuRef.current && !menuRef.current.contains(e.target)) setUserMenuOpen(false); });
+      setView("chat");
+    };
+    checkAuth();
+
+    fetch(`${API_BASE}/models`).then(r => r.json()).then(d => {
+      if (d.models) setModels(d.models);
+    }).catch(() => {});
+    fetch(`${API_BASE}/stripe/demo-status`).then(r => r.json()).then(d => {
+      if (d.demo !== undefined) setDemoMode(d.demo);
+    }).catch(() => {});
+
+    const handleClick = e => { if (menuRef.current && !menuRef.current.contains(e.target)) setUserMenuOpen(false); };
+    document.addEventListener("click", handleClick);
+    return () => document.removeEventListener("click", handleClick);
   }, []);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
-  useEffect(() => { if (view === "chat") inputRef.current?.focus(); }, [view]);
+  useEffect(() => { if (view === "chat") setTimeout(() => inputRef.current?.focus(), 100); }, [view]);
 
-  const loadChats = useCallback(async () => {
+  async function loadChats() {
     const t = getToken(); if (!t) return;
-    const r = await fetch(`${API_BASE}/chat`, { headers: { Authorization: `Bearer ${t}` } });
-    const d = await r.json();
-    if (d.ok) setChats(d.chats || []);
-  }, []);
+    try {
+      const r = await fetch(`${API_BASE}/chat`, { headers: { Authorization: `Bearer ${t}` } });
+      const d = await r.json();
+      if (d.ok) setChats(d.chats || []);
+    } catch {}
+  }
 
   async function doAuth(mode) {
     setAuthError(""); setAuthLoading(true);
@@ -144,14 +154,27 @@ export default function Home() {
       });
       const d = await r.json();
       if (!d.ok) { setAuthError(d.error || "Failed"); setAuthLoading(false); return; }
-      setToken(d.accessToken); setUser(d.user); setView("chat"); setAuthLoading(false);
+      setToken(d.accessToken);
+      setUser(d.user);
+      setAuthLoading(false);
+      setView("chat");
       loadChats();
-    } catch { setAuthError("Connection error"); setAuthLoading(false); }
+    } catch (e) {
+      setAuthError("Connection error");
+      setAuthLoading(false);
+      console.error("Auth error:", e);
+    }
   }
 
   function logout() {
-    clearToken(); setUser(null); setView("auth"); setMessages([]); setChats([]);
-    setActiveChat(null); setSidebarOpen(true); setUserMenuOpen(false);
+    clearToken();
+    setView("auth");
+    setUser(null);
+    setMessages([]);
+    setChats([]);
+    setActiveChat(null);
+    setSidebarOpen(true);
+    setUserMenuOpen(false);
   }
 
   async function handleUpgrade() {
@@ -224,37 +247,46 @@ export default function Home() {
     setSending(false);
   }
 
-  function newChat() { setMessages([]); setActiveChat(null); setChatSearch(""); setTimeout(() => inputRef.current?.focus(), 100); }
+  function newChat() {
+    setMessages([]);
+    setActiveChat(null);
+    setChatSearch("");
+    setTimeout(() => inputRef.current?.focus(), 100);
+  }
 
   async function loadChat(id) {
     const t = getToken(); if (!t) return;
-    const r = await fetch(`${API_BASE}/chat/${id}`, { headers: { Authorization: `Bearer ${t}` } });
-    const d = await r.json();
-    if (d.ok && d.chat) {
-      setActiveChat({ id: d.chat.id, title: d.chat.title });
-      setMessages(d.chat.messages || []);
-    }
+    try {
+      const r = await fetch(`${API_BASE}/chat/${id}`, { headers: { Authorization: `Bearer ${t}` } });
+      const d = await r.json();
+      if (d.ok && d.chat) {
+        setActiveChat({ id: d.chat.id, title: d.chat.title });
+        setMessages(d.chat.messages || []);
+      }
+    } catch {}
   }
 
   async function deleteChat(id) {
     const t = getToken(); if (!t) return;
-    await fetch(`${API_BASE}/chat/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${t}` } });
-    if (activeChat?.id === id) { setMessages([]); setActiveChat(null); }
-    loadChats();
+    try {
+      await fetch(`${API_BASE}/chat/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${t}` } });
+      if (activeChat?.id === id) { setMessages([]); setActiveChat(null); }
+      loadChats();
+    } catch {}
   }
 
   async function renameChat(id) {
     if (!editTitleVal.trim()) { setEditingTitle(null); return; }
     const t = getToken(); if (!t) return;
-    const r = await fetch(`${API_BASE}/chat/${id}`, {
-      method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
-      body: JSON.stringify({ title: editTitleVal.trim() })
-    });
-    const d = await r.json();
-    if (d.ok) {
-      if (activeChat?.id === id) setActiveChat(prev => ({ ...prev, title: editTitleVal.trim() }));
+    try {
+      const r = await fetch(`${API_BASE}/chat/${id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+        body: JSON.stringify({ title: editTitleVal.trim() })
+      });
+      const d = await r.json();
+      if (d.ok && activeChat?.id === id) setActiveChat(prev => ({ ...prev, title: editTitleVal.trim() }));
       loadChats();
-    }
+    } catch {}
     setEditingTitle(null);
   }
 
@@ -264,13 +296,6 @@ export default function Home() {
     if (user.tier === "basic") return "Basic";
     return `Free (${user.questions_remaining || 0})`;
   }
-
-  const suggestions = [
-    "Write a Python script to sort files by date",
-    "Explain how DNS works",
-    "Create a Docker Compose for PostgreSQL",
-    "Write a bash backup script"
-  ];
 
   if (view === "auth") {
     return (
@@ -318,7 +343,6 @@ export default function Home() {
 
   return (
     <main className="chatShell">
-      {/* Sidebar */}
       <aside className={`chatSidebar ${sidebarOpen ? "open" : "closed"}`}>
         <div className="sidebarHeader">
           <div className="sidebarBrand">
@@ -374,38 +398,43 @@ export default function Home() {
           ))}
         </div>
 
-        <div className="sidebarUser" ref={menuRef}>
-          <div className="sidebarUserInfo" onClick={() => setUserMenuOpen(!userMenuOpen)}>
-            <div className="sidebarUserAvatar">{user?.email?.[0]?.toUpperCase() || "U"}</div>
-            <div className="sidebarUserText">
-              <span className="sidebarUserName">{user?.email || "User"}</span>
-              <span className={`sidebarTier tier-${user?.tier || "free"}`}>{getTierLabel()}</span>
+        {user ? (
+          <div className="sidebarUser" ref={menuRef}>
+            <div className="sidebarUserInfo" onClick={() => setUserMenuOpen(!userMenuOpen)}>
+              <div className="sidebarUserAvatar">{user?.email?.[0]?.toUpperCase() || "U"}</div>
+              <div className="sidebarUserText">
+                <span className="sidebarUserName">{user?.email || "User"}</span>
+                <span className={`sidebarTier tier-${user?.tier || "free"}`}>{getTierLabel()}</span>
+              </div>
+              <svg className={`sidebarChevron ${userMenuOpen ? "open" : ""}`} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6"/></svg>
             </div>
-            <svg className={`sidebarChevron ${userMenuOpen ? "open" : ""}`} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6"/></svg>
+            {userMenuOpen && (
+              <div className="userMenu">
+                <div className="userMenuItem" onClick={() => { setUserMenuOpen(false); logout(); }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+                  Log out
+                </div>
+                <div className="userMenuDivider" />
+                <div className="userMenuItem muted">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                  {demoMode ? "DEMO Mode" : "Production"}
+                </div>
+              </div>
+            )}
           </div>
-
-          {userMenuOpen && (
-            <div className="userMenu">
-              <div className="userMenuItem" onClick={() => { setUserMenuOpen(false); logout(); }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
-                Log out
-              </div>
-              <div className="userMenuDivider" />
-              <div className="userMenuItem muted">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                {demoMode ? "DEMO Mode" : "Production"}
-              </div>
-            </div>
-          )}
-        </div>
+        ) : (
+          <div className="sidebarUser">
+            <button className="newChatBtn" onClick={() => { setView("auth"); setAuthMode("register"); setAuthError(""); }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/></svg>
+              Sign In / Register
+            </button>
+          </div>
+        )}
       </aside>
 
-      {/* Overlay for mobile */}
       {sidebarOpen && <div className="sidebarOverlay" onClick={() => setSidebarOpen(false)} />}
 
-      {/* Main chat area */}
       <section className="chatMain">
-        {/* Top bar */}
         <header className="chatTopbar">
           <div className="topbarLeft">
             <button className="menuBtn" onClick={() => setSidebarOpen(true)}>
@@ -416,9 +445,10 @@ export default function Home() {
             </div>
           </div>
           <div className="topbarRight">
+            {!user && <span className="anonBadge">Anonymous</span>}
             <select className="modelSelect" value={selectedModel} onChange={e => setSelectedModel(e.target.value)}>
               <option value="">Auto ({user?.tier === "pro" ? "Claude" : user?.tier === "basic" ? "Llama 70B" : "Llama 8B"})</option>
-              {models.filter(m => m.tier === "free" || m.tier === user?.tier).map(m => (
+              {models.filter(m => m.tier === "free" || m.tier === user?.tier || !user).map(m => (
                 <option key={m.id} value={m.id}>{m.name} ({m.tier})</option>
               ))}
             </select>
@@ -432,10 +462,14 @@ export default function Home() {
                 {demoMode ? "Manage (DEMO)" : "Manage"}
               </button>
             )}
+            {!user && (
+              <button className="upgradeBtn" onClick={() => { setView("auth"); setAuthMode("register"); setAuthError(""); }}>
+                Sign Up Free
+              </button>
+            )}
           </div>
         </header>
 
-        {/* Messages */}
         <div className="chatMessages">
           {messages.length === 0 ? (
             <div className="chatEmpty">
@@ -481,7 +515,6 @@ export default function Home() {
           <div ref={endRef} />
         </div>
 
-        {/* Bottom area */}
         <div className="chatBottom">
           <div className="composerWrap">
             <div className="composer">
