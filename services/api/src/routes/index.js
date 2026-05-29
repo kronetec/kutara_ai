@@ -3,6 +3,7 @@ import { authRouter } from "./auth.js";
 import { chatRouter } from "./chat.js";
 import { adminRouter } from "./admin.js";
 import { stripeRouter } from "./stripe.js";
+import { paypalRouter } from "./paypal.js";
 
 export function createRouter() {
   const r = Router();
@@ -10,6 +11,7 @@ export function createRouter() {
   r.use("/chat", chatRouter);
   r.use("/admin", adminRouter);
   r.use("/stripe", stripeRouter);
+  r.use("/paypal", paypalRouter);
 
   r.get("/health", (q, s) => s.json({ ok: true, system: "Kutara AI", version: "2.0.0", status: "online" }));
   r.get("/models", (q, s) => s.json({

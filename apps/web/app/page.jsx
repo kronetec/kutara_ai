@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
 
-const API_BASE = "https://api.kutara.org";
+const API_BASE = "https://api.kutara.org/api";
 
 function getToken() { return typeof window !== "undefined" ? localStorage.getItem("kutara_token") : null; }
 function setToken(t) { localStorage.setItem("kutara_token", t); }
@@ -54,9 +54,19 @@ export default function Home() {
   const [chats, setChats] = useState([]);
   const [activeChat, setActiveChat] = useState(null);
   const [upgradeLoading, setUpgradeLoading] = useState(false);
+  const [demoMode, setDemoMode] = useState(false);
   const endRef = useRef(null);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("demo") === "1") {
+      window.history.replaceState({}, "", "/");
+      const t = getToken();
+      if (t) {
+        fetch(`${API_BASE}/auth/me`, { headers: { Authorization: `Bearer ${t}` } })
+          .then(r => r.json()).then(d => { if (d.ok) setUser(d.user); });
+      }
+    }
     const t = getToken();
     if (t) {
       fetch(`${API_BASE}/auth/me`, { headers: { Authorization: `Bearer ${t}` } })
@@ -64,6 +74,7 @@ export default function Home() {
         .catch(() => {});
     }
     fetch(`${API_BASE}/models`).then(r => r.json()).then(d => setModels(d.models || [])).catch(() => {});
+    fetch(`${API_BASE}/stripe/demo-status`).then(r => r.json()).then(d => setDemoMode(d.demo)).catch(() => {});
   }, []);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
@@ -227,6 +238,7 @@ export default function Home() {
             <div className="brandIcon">K</div>
             <div><h1>Kutara AI</h1><p>{user?.email || "User"}</p></div>
           </div>
+          {demoMode && <span style={{ fontSize: 10, background: "rgba(246,202,114,0.15)", color: "#f6ca72", padding: "2px 6px", borderRadius: 4, fontWeight: 700 }}>DEMO</span>}
         </div>
         <button className="newChat" onClick={newChat}>+ New Chat</button>
         <div className="sideTitle">Chat History</div>
@@ -245,12 +257,12 @@ export default function Home() {
           {(user?.tier === "free") ? (
             <button onClick={handleUpgrade} disabled={upgradeLoading}
               style={{ border: 0, background: "linear-gradient(145deg, #f6ca72, #b97422)", color: "#111", borderRadius: 8, padding: 10, width: "100%", textAlign: "left", fontWeight: 600, marginBottom: 8 }}>
-              {upgradeLoading ? "Loading..." : "⬆ Upgrade to Basic - €5/mo"}
+              {upgradeLoading ? "Loading..." : demoMode ? "⬆ Upgrade to Basic (DEMO)" : "⬆ Upgrade to Basic - €5/mo"}
             </button>
           ) : (user?.tier === "basic") ? (
             <button onClick={handleManageSubscription} disabled={upgradeLoading}
               style={{ border: "1px solid rgba(255,255,255,0.12)", background: "transparent", color: "#f6ca72", borderRadius: 8, padding: 10, width: "100%", textAlign: "left", marginBottom: 8 }}>
-              {upgradeLoading ? "Loading..." : "⚙ Manage Subscription"}
+              {upgradeLoading ? "Loading..." : demoMode ? "⚙ Manage Subscription (DEMO)" : "⚙ Manage Subscription"}
             </button>
           ) : null}
           <button onClick={logout} style={{ border: 0, background: "rgba(255,80,80,0.08)", color: "#ffb4b4", borderRadius: 8, padding: 10, width: "100%", textAlign: "left" }}>Logout</button>
