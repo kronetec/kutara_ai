@@ -1,0 +1,1 @@
+{"name":"kutara-ai-api","version":"2.0.0","type":"module","scripts":{"start":"node src/index.js","migrate":"node src/lib/migrate.js"},"dependencies":{"express":"latest","cors":"latest","helmet":"latest","jsonwebtoken":"latest","bcryptjs":"latest","pg":"latest","ioredis":"latest","uuid":"latest","dotenv":"latest"}}

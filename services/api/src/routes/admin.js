@@ -1,0 +1,6 @@
+import{Router}from"express";import jwt from"jsonwebtoken";import{pool}from"../lib/db.js";const S=process.env.JWT_SECRET||"dev";export const adminRouter=Router();
+function ra(req,res,n){try{jwt.verify((req.headers.authorization||"").replace("Bearer ",""),S);n();}catch{res.status(401).json({ok:false,error:"Invalid token"});}}
+adminRouter.post("/login",(req,res)=>{const{email,password}=req.body;if(email===process.env.ADMIN_EMAIL&&password===process.env.ADMIN_PASSWORD){const t=jwt.sign({userId:"admin",tier:"admin"},S,{expiresIn:"12h"});return res.json({ok:true,token:t});}res.status(401).json({ok:false,error:"Invalid credentials"});});
+adminRouter.get("/users",ra,async(req,res,n)=>{try{const r=await pool.query("SELECT id,email,name,tier,questions_remaining,created_at FROM users ORDER BY created_at DESC");res.json({ok:true,users:r.rows});}catch(e){n(e);}});
+adminRouter.post("/users/:id/reset",ra,async(req,res,n)=>{try{await pool.query("UPDATE users SET questions_remaining=5,lockout_until=NULL WHERE id=$1",[req.params.id]);res.json({ok:true});}catch(e){n(e);}});
+adminRouter.get("/system",ra,async(req,res,n)=>{try{const u=await pool.query("SELECT COUNT(*)FROM users");const c=await pool.query("SELECT COUNT(*)FROM chats");res.json({ok:true,system:{users:parseInt(u.rows[0].count),chats:parseInt(c.rows[0].count),version:"2.0.0"}});}catch(e){n(e);}});
